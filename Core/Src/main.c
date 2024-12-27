@@ -19,7 +19,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "portmacro.h"
+#include "queue.h"
 #include "stm32f1xx_hal_gpio.h"
+#include "stm32f1xx_hal_uart.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -45,20 +51,22 @@
 UART_HandleTypeDef huart2;
 
 /* Definitions for defaultTask */
-osThreadId_t Task01Handle;
-const osThreadAttr_t Task01_attributes = {
-  .name = "Task01",
+osThreadId_t ReadingTaskHandle;
+const osThreadAttr_t ReadingTask_attributes = {
+  .name = "ReadingTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 
-osThreadId_t Task02Handle;
-const osThreadAttr_t Task02_attributes = {
-  .name = "Task02",
+osThreadId_t SendingTaskHandle;
+const osThreadAttr_t SendingTask_attributes = {
+  .name = "SendingTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+
+QueueHandle_t queue1;
 
 /* USER CODE END PV */
 
@@ -66,8 +74,8 @@ const osThreadAttr_t Task02_attributes = {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-void StartTask01(void *argument);
-void StartTask02(void *argument);
+void StartTaskReadingTemp(void *argument);
+void StartTaskSendingTemp(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -129,12 +137,14 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+    queue1 = xQueueCreate(10, sizeof(uint32_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  Task01Handle = osThreadNew(StartTask01, NULL, &Task01_attributes);
-  Task02Handle = osThreadNew(StartTask02, NULL, &Task02_attributes);
+  ReadingTaskHandle = osThreadNew(StartTaskReadingTemp, NULL, &ReadingTask_attributes);
+  SendingTaskHandle = osThreadNew(StartTaskSendingTemp, NULL, &SendingTask_attributes);
+
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -283,26 +293,35 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-void StartTask01(void *argument)
+void StartTaskReadingTemp(void *argument)
 {
   /* USER CODE BEGIN 5 */
+    uint32_t temp = 32;
   /* Infinite loop */
   for(;;)
   {
-    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    osDelay(500);
+    xQueueSend(queue1, &temp, 10);
+    temp++;
+    osDelay(1000);
   }
   /* USER CODE END 5 */
 }
 
-void StartTask02(void *argument)
+void StartTaskSendingTemp(void *argument)
 {
   /* USER CODE BEGIN 5 */
+    uint32_t received_temp = 0; 
   /* Infinite loop */
   for(;;)
   {
-    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    osDelay(600);
+    if (xQueueReceive(queue1, &received_temp, portMAX_DELAY) == pdTRUE)
+    {
+        char buf[50];
+        itoa(received_temp, buf, 10);
+        strcat(buf, "\r\n");
+        size_t string_length = strlen(buf);
+        HAL_UART_Transmit(&huart2, buf, string_length, 10);
+    }
   }
   /* USER CODE END 5 */
 }
