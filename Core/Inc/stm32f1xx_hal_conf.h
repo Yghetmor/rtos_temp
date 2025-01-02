@@ -68,6 +68,7 @@
 #define HAL_UART_MODULE_ENABLED
 /*#define HAL_USART_MODULE_ENABLED   */
 /*#define HAL_WWDG_MODULE_ENABLED   */
+#define LL_GPIO_MODULE_ENABLED
 
 #define HAL_CORTEX_MODULE_ENABLED
 #define HAL_DMA_MODULE_ENABLED
@@ -365,6 +366,10 @@
 #ifdef HAL_MMC_MODULE_ENABLED
 #include "stm32f1xx_hal_mmc.h"
 #endif /* HAL_MMC_MODULE_ENABLED */
+
+#ifdef HAL_GPIO_MODULE_ENABLED
+#include "stm32f1xx_ll_gpio.h"
+#endif /* HAL_GPIO_MODULE_ENABLED */
 
 /* Exported macro ------------------------------------------------------------*/
 #ifdef  USE_FULL_ASSERT

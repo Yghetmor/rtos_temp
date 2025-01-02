@@ -19,10 +19,15 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "cmsis_os2.h"
 #include "portmacro.h"
 #include "queue.h"
+#include "stm32f103xb.h"
+#include "DHT11.h"
+#include "DS18B20.h"
 #include "stm32f1xx_hal_gpio.h"
 #include "stm32f1xx_hal_uart.h"
+#include "stm32f1xx_ll_gpio.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,13 +54,14 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
+TIM_HandleTypeDef htim2;
 
 /* Definitions for defaultTask */
 osThreadId_t ReadingTaskHandle;
 const osThreadAttr_t ReadingTask_attributes = {
   .name = "ReadingTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 
 osThreadId_t SendingTaskHandle;
@@ -74,6 +80,7 @@ QueueHandle_t queue1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM2_Init(void);
 void StartTaskReadingTemp(void *argument);
 void StartTaskSendingTemp(void *argument);
 
@@ -116,6 +123,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+    MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -137,7 +145,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-    queue1 = xQueueCreate(10, sizeof(uint32_t));
+    queue1 = xQueueCreate(10, sizeof(struct dht11_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -182,12 +190,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -197,7 +202,7 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
@@ -274,6 +279,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : DHT_Pin */
+  GPIO_InitStruct.Pin = TEMP_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(TEMP_PORT, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
@@ -283,6 +295,45 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 8;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65535;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
 
 /* USER CODE END 4 */
 
@@ -296,13 +347,14 @@ static void MX_GPIO_Init(void)
 void StartTaskReadingTemp(void *argument)
 {
   /* USER CODE BEGIN 5 */
-    uint32_t temp = 32;
   /* Infinite loop */
   for(;;)
   {
-    xQueueSend(queue1, &temp, 10);
-    temp++;
-    osDelay(1000);
+    HAL_UART_Transmit(&huart2, "Reading temp...\r\n", 17, 10);
+    struct dht11_t dht_data = read_dht(TEMP_PORT, TEMP_PIN, &htim2);
+    xQueueSend(queue1, &dht_data, 10);
+    // xQueueSend(queue1, &test_data, 10);
+    osDelay(3000);
   }
   /* USER CODE END 5 */
 }
@@ -310,17 +362,66 @@ void StartTaskReadingTemp(void *argument)
 void StartTaskSendingTemp(void *argument)
 {
   /* USER CODE BEGIN 5 */
-    uint32_t received_temp = 0; 
+    const unsigned char *error_message = "Bad DHT data\r\n";
+    const unsigned char *temp_prefix = "Temperature : ";
+    const unsigned char *hum_prefix = "Humidity (%) : ";
+    const unsigned char *ending = "\r\n";
+    struct dht11_t received_dht_data = {0}; 
   /* Infinite loop */
   for(;;)
   {
-    if (xQueueReceive(queue1, &received_temp, portMAX_DELAY) == pdTRUE)
+    if (xQueueReceive(queue1, &received_dht_data, portMAX_DELAY) == pdTRUE)
     {
-        char buf[50];
-        itoa(received_temp, buf, 10);
-        strcat(buf, "\r\n");
-        size_t string_length = strlen(buf);
-        HAL_UART_Transmit(&huart2, buf, string_length, 10);
+        switch(received_dht_data.status)
+        {
+            case ERR_START_SEND_HIGH:
+                HAL_UART_Transmit(&huart2, "err start send high", 19, 10);
+                break;
+            case ERR_START_RESP_LOW:
+                HAL_UART_Transmit(&huart2, "err start resp low", 18, 10);
+                break;
+            case ERR_START_RESP_HIGH:
+                HAL_UART_Transmit(&huart2, "err start resp high", 19, 10);
+                break;
+            case ERR_DATA:
+                HAL_UART_Transmit(&huart2, "err data", 8, 10);
+                break;
+            case ERR_DATA_LOW:
+                HAL_UART_Transmit(&huart2, "err data low", 12, 10);
+                break;
+            case ERR_DATA_HIGH:
+                HAL_UART_Transmit(&huart2, "err data high", 13, 10);
+                break;
+            case ERR_CHKSUM:
+                HAL_UART_Transmit(&huart2, "err checksum", 12, 10);
+                break;
+            case OK:
+                char temp_int_buf[4];
+                char temp_dec_buf[4];
+                char hum_int_buf[4];
+                char hum_dec_buf[4];
+
+                itoa(received_dht_data.temperature_int, temp_int_buf, 10);
+                itoa(received_dht_data.temperature_dec, temp_dec_buf, 10);
+                itoa(received_dht_data.humidity_int, hum_int_buf, 10);
+                itoa(received_dht_data.humidity_dec, hum_dec_buf, 10);
+
+                HAL_UART_Transmit(&huart2, temp_prefix, strlen(temp_prefix), 10);
+                HAL_UART_Transmit(&huart2, temp_int_buf, strlen(temp_int_buf), 10);
+                HAL_UART_Transmit(&huart2, ",", 1, 10);
+                HAL_UART_Transmit(&huart2, temp_dec_buf, strlen(temp_dec_buf), 10);
+                HAL_UART_Transmit(&huart2, ending, strlen(ending), 10);
+
+                HAL_UART_Transmit(&huart2, hum_prefix, strlen(hum_prefix), 10);
+                HAL_UART_Transmit(&huart2, hum_int_buf, strlen(hum_int_buf), 10);
+                HAL_UART_Transmit(&huart2, ",", 1, 10);
+                HAL_UART_Transmit(&huart2, hum_dec_buf, strlen(hum_dec_buf), 10);
+                HAL_UART_Transmit(&huart2, ending, strlen(ending), 10);
+                break;
+            default:
+                HAL_UART_Transmit(&huart2, "other error", 11, 10);
+                break;
+        }
     }
   }
   /* USER CODE END 5 */
