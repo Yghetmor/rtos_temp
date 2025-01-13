@@ -22,12 +22,13 @@
 #include "cmsis_os2.h"
 #include "portmacro.h"
 #include "queue.h"
+#include "semphr.h"
 #include "stm32f103xb.h"
 #include "DHT11.h"
 #include "DS18B20.h"
 #include "stm32f1xx_hal_gpio.h"
 #include "stm32f1xx_hal_uart.h"
-#include "stm32f1xx_ll_gpio.h"
+#include "stm32f1xx_it.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,9 +71,17 @@ const osThreadAttr_t SendingTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+
+osThreadId_t ButtonTaskHandle;
+const osThreadAttr_t ButtonTask_attributes = {
+  .name = "ButtonTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
 /* USER CODE BEGIN PV */
 
 QueueHandle_t queue1;
+SemaphoreHandle_t semaphore1;
 
 /* USER CODE END PV */
 
@@ -83,6 +92,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 void StartTaskReadingTemp(void *argument);
 void StartTaskSendingTemp(void *argument);
+void ButtonPressTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -90,6 +100,15 @@ void StartTaskSendingTemp(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void EXTI15_10_IRQHandler(void)
+{
+    if (__HAL_GPIO_EXTI_GET_IT(B1_Pin) != 0x00u)
+    {
+        __HAL_GPIO_EXTI_CLEAR_IT(B1_Pin);
+        xSemaphoreGiveFromISR(semaphore1, NULL);
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -146,12 +165,14 @@ int main(void)
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
     queue1 = xQueueCreate(10, sizeof(struct dht11_t));
+    semaphore1 = xSemaphoreCreateBinary();
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* creation of defaultTask */
   ReadingTaskHandle = osThreadNew(StartTaskReadingTemp, NULL, &ReadingTask_attributes);
   SendingTaskHandle = osThreadNew(StartTaskSendingTemp, NULL, &SendingTask_attributes);
+  ButtonTaskHandle = osThreadNew(ButtonPressTask, NULL, &ButtonTask_attributes);
 
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -425,6 +446,16 @@ void StartTaskSendingTemp(void *argument)
     }
   }
   /* USER CODE END 5 */
+}
+
+void ButtonPressTask(void *argument)
+{
+    const unsigned char press_message[] = "Button pressed !\r\n";
+    for(;;)
+    {
+        xSemaphoreTake(semaphore1, portMAX_DELAY);
+        HAL_UART_Transmit(&huart2, press_message, strlen(press_message), 10);
+    }
 }
 
 /**
